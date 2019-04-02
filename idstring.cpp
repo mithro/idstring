@@ -121,14 +121,12 @@ inline istr_dptr_t create_istr_dptr(const char* str, size_t n) {
 // 65,535 elements * sizeof(id_string_data_ptr) / 1024 / 1024
 // == 65,535 * 8 / 1024 / 1024
 // == 0.5 megabytes
-
-// 3 levels
 typedef struct {
-    uint16_t used = 1;
+    uint16_t used = 1; // We leave the zero index empty.
     istr_dptr_t strings[UINT16_MAX];
-} istr_table_t;
+} istr_dptr_table_t;
 
-uint16_t _istr_table_add_str(istr_table_t* table, const char* str, size_t n) {
+uint16_t _istr_dptr_table_add_str(istr_dptr_table_t* table, const char* str, size_t n) {
     uint16_t i = 1;
     // Check if the string is already found at an index in the table
     for(; i < table->used; i++) {
@@ -147,24 +145,28 @@ uint16_t _istr_table_add_str(istr_table_t* table, const char* str, size_t n) {
     return i;
 }
 
-uint16_t istr_table_add_str(istr_table_t* table, const char* str, size_t n) {
+uint16_t istr_dptr_table_add_str(istr_dptr_table_t* table, const char* str, size_t n) {
     assert(n > 0);
-    uint16_t r = _istr_table_add_str(table, str, n);
+    uint16_t r = _istr_dptr_table_add_str(table, str, n);
     assert(r > 0);
     return r;
 }
 
-// id_string -- Collection of indexes into the istr_table structures.
+// id_string -- Collection of indexes into the istr_dptr_table structures.
 // sizeof(uint64_t)/sizeof(uint16_t)
 // 8/2 == 4
 #define ISTR_LEVEL_MAX 4
 
 #define ISTR_DELIMITER '/'
 
-istr_table_t table_lvl[ISTR_LEVEL_MAX];
+// Tables for storing string data pointers, one for each level.
+istr_dptr_table_t istr_dptr_tables[ISTR_LEVEL_MAX];
+
+// String structure == 8bytes == uint64_t
+// Array of uint16_t indexes into istr_dptr_tables
 typedef struct {
     union {
-        uint16_t istr_table_idx[ISTR_LEVEL_MAX];
+        uint16_t dptr_idx[ISTR_LEVEL_MAX];
         uint64_t v;
     };
 } istr_t;
@@ -230,9 +232,9 @@ istr_t new_istr(const char* str, size_t n) {
     istr_t nstr = { 0 }; // = (istr_t*)malloc(ISTR_LEVEL_MAX*sizeof(uint16_t));
     for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
         if (slen[i] > 0) {
-            nstr.istr_table_idx[i] = istr_table_add_str(&(table_lvl[i]), del[i], slen[i]);
+            nstr.dptr_idx[i] = istr_dptr_table_add_str(&(istr_dptr_tables[i]), del[i], slen[i]);
         } else {
-            nstr.istr_table_idx[i] = 0;
+            nstr.dptr_idx[i] = 0;
         }
     }
     return nstr;
@@ -244,9 +246,9 @@ void istr_print(istr_t s) {
         if (i > 0) {
             putchar(ISTR_DELIMITER);
         }
-        istr_dptr_print(table_lvl[i].strings[s.istr_table_idx[i]]);
+        istr_dptr_print(istr_dptr_tables[i].strings[s.dptr_idx[i]]);
         i++;
-        if ((s.istr_table_idx[i]) == 0)
+        if ((s.dptr_idx[i]) == 0)
             break;
     }
 }
@@ -254,9 +256,9 @@ void istr_print(istr_t s) {
 void istr_repr(istr_t s) {
     size_t i = 0;
     while(i < ISTR_LEVEL_MAX) {
-        istr_dptr_repr(table_lvl[i].strings[s.istr_table_idx[i]]);
+        istr_dptr_repr(istr_dptr_tables[i].strings[s.dptr_idx[i]]);
         i++;
-        if ((s.istr_table_idx[i]) == 0)
+        if ((s.dptr_idx[i]) == 0)
             break;
         putchar(' ');
         putchar(ISTR_DELIMITER);
@@ -266,7 +268,7 @@ void istr_repr(istr_t s) {
 
 inline bool istr_eq(istr_t a, istr_t b) {
     for(size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
-        if (a.istr_table_idx[i] != b.istr_table_idx[i]) {
+        if (a.dptr_idx[i] != b.dptr_idx[i]) {
             return false;
         }
     }
@@ -275,12 +277,12 @@ inline bool istr_eq(istr_t a, istr_t b) {
 
 int istr_cmp(istr_t a, istr_t b) {
     for(size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
-        uint16_t idx_a = a.istr_table_idx[i];
-        uint16_t idx_b = b.istr_table_idx[i];
+        uint16_t idx_a = a.dptr_idx[i];
+        uint16_t idx_b = b.dptr_idx[i];
         if (idx_a == idx_b)
             continue;
-        istr_dptr_t dptr_a = table_lvl[i].strings[idx_a];
-        istr_dptr_t dptr_b = table_lvl[i].strings[idx_b];
+        istr_dptr_t dptr_a = istr_dptr_tables[i].strings[idx_a];
+        istr_dptr_t dptr_b = istr_dptr_tables[i].strings[idx_b];
         // FIXME: Make this work...
         if (idx_a == 0) {
             return -1;
@@ -300,26 +302,26 @@ int main(int argc, char **argv) {
 
     size_t i = 0;
     strings[i++] = new_istr("A1", 0);
-    assert(table_lvl[0].used == 2);
-    assert(table_lvl[1].used == 1);
-    assert(table_lvl[2].used == 1);
-    assert(table_lvl[3].used == 1);
+    assert(istr_dptr_tables[0].used == 2);
+    assert(istr_dptr_tables[1].used == 1);
+    assert(istr_dptr_tables[2].used == 1);
+    assert(istr_dptr_tables[3].used == 1);
     strings[i++] = new_istr("A1/", 0);
-    assert(table_lvl[0].used == 3);
-    assert(table_lvl[1].used == 1);
-    assert(table_lvl[2].used == 1);
-    assert(table_lvl[3].used == 1);
+    assert(istr_dptr_tables[0].used == 3);
+    assert(istr_dptr_tables[1].used == 1);
+    assert(istr_dptr_tables[2].used == 1);
+    assert(istr_dptr_tables[3].used == 1);
     strings[i++] = new_istr("A1/B1", 0);
-    assert(table_lvl[0].used == 3);
-    assert(table_lvl[1].used == 2);
-    assert(table_lvl[2].used == 1);
-    assert(table_lvl[3].used == 1);
+    assert(istr_dptr_tables[0].used == 3);
+    assert(istr_dptr_tables[1].used == 2);
+    assert(istr_dptr_tables[2].used == 1);
+    assert(istr_dptr_tables[3].used == 1);
     //strings[i++] = new_istr("A1//B1", 0);
     strings[i++] = new_istr("A1/B1/C", 0);
-    assert(table_lvl[0].used == 3);
-    assert(table_lvl[1].used == 2);
-    assert(table_lvl[2].used == 2);
-    assert(table_lvl[3].used == 1);
+    assert(istr_dptr_tables[0].used == 3);
+    assert(istr_dptr_tables[1].used == 2);
+    assert(istr_dptr_tables[2].used == 2);
+    assert(istr_dptr_tables[3].used == 1);
     strings[i++] = new_istr("A1/B1/C/D", 0);
     strings[i++] = new_istr("A1/B2/C/D/E", 0);
     strings[i++] = new_istr("A1/B3/C/D/E/F", 0);
@@ -353,10 +355,10 @@ int main(int argc, char **argv) {
 
     printf("\n\n=== Tables ===\n");
     for(size_t j = 0; j < ISTR_LEVEL_MAX; j++) {
-        printf("--- %d level (%d entries)---\n", j, table_lvl[j].used);
-        for(size_t k = 1; k < table_lvl[j].used; k++) {
-            printf("[%04d] = ", k);
-            istr_dptr_print(table_lvl[j].strings[k]);
+        printf("--- %d level (%d entries)---\n", j, istr_dptr_tables[j].used);
+        for(size_t k = 1; k < istr_dptr_tables[j].used; k++) {
+            printf("[%04d] = \"", k);
+            istr_dptr_print(istr_dptr_tables[j].strings[k]);
             printf("\";\n");
         }
     }
