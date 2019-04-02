@@ -249,13 +249,15 @@ void istr_print(istr_t s) {
 void istr_repr(istr_t s) {
     size_t i = 0;
     while(i < ISTR_LEVEL_MAX) {
+        if (i > 0) {
+            putchar(' ');
+            putchar(ISTR_DELIMITER);
+            putchar(' ');
+        }
         istr_dptr_repr(istr_dptr_tables[i].strings[s.dptr_idx[i]]);
         i++;
         if ((s.dptr_idx[i]) == 0)
             break;
-        putchar(' ');
-        putchar(ISTR_DELIMITER);
-        putchar(' ');
     }
 }
 
