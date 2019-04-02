@@ -222,14 +222,7 @@ istr_t new_istr(const char* str, size_t n) {
         }
     }
 
-    for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
-        printf("%d: ", i);
-        ab_print(del[i], slen[i]);
-        printf("\n");
-    }
-    printf("--\n");
-
-    istr_t nstr = { 0 }; // = (istr_t*)malloc(ISTR_LEVEL_MAX*sizeof(uint16_t));
+    istr_t nstr = { 0 };
     for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
         if (slen[i] > 0) {
             nstr.dptr_idx[i] = istr_dptr_table_add_str(&(istr_dptr_tables[i]), del[i], slen[i]);
