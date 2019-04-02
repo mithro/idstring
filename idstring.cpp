@@ -55,8 +55,12 @@ inline uint8_t istr_dptr_internal_len(istr_dptr_t v) {
     return v.length & ISTR_DPTR_MASK;
 }
 
+inline bool istr_dptr_internal_data(istr_dptr_t v) {
+    return istr_dptr_internal_len > 0;
+}
+
 inline size_t istr_dptr_len(istr_dptr_t v) {
-    assert(istr_dptr_internal_len(v) > 0 || v.external != NULL);
+    assert(istr_dptr_internal_data(v) || v.external != NULL);
     return istr_dptr_internal_len(v) || strlen(v.external);
 }
 
@@ -71,16 +75,28 @@ void istr_dptr_print(istr_dptr_t v) {
     }
 }
 
-
-int istr_dptr_strcmp(istr_dptr_t a, const char* b) {
-    if (istr_dptr_internal_len(a) == 0) {
-        return strcmp(a.external, b);
+void istr_dptr_repr(istr_dptr_t v) {
+    size_t l = istr_dptr_internal_len(v);
+    if (l == 0) {
+        printf("e\"%s\"", v.external);
     } else {
-        return strncmp(a.internal, b, ISTR_DPTR_INTERNAL_MAXLEN);
+        putchar('i');
+        putchar('"');
+        for(size_t i = 0; i < l; i++) {
+            putchar(v.internal[i]);
+        }
+        putchar('"');
     }
 }
 
-/*
+int istr_dptr_strcmp(istr_dptr_t a, const char* b, size_t n) {
+    if (istr_dptr_internal_len(a) == 0) {
+        return strncmp(a.external, b, n);
+    } else {
+        return strncmp(a.internal, b, std::min(ISTR_DPTR_INTERNAL_MAXLEN, n));
+    }
+}
+
 int istr_dptr_cmp(istr_dptr_t a, istr_dptr_t b) {
     if (b.length != 0) {
         return istr_dptr_strcmp(a, b.internal, b.length);
@@ -88,16 +104,16 @@ int istr_dptr_cmp(istr_dptr_t a, istr_dptr_t b) {
         return istr_dptr_strcmp(a, b.external, strlen(b.external));
     }
 }
-*/
 
 inline istr_dptr_t create_istr_dptr(const char* str, size_t n) {
-    istr_dptr_t v;
+    istr_dptr_t v = { .external = NULL };
     if (n < ISTR_DPTR_INTERNAL_MAXLEN) {
-        strncpy(v.internal, str, std::min(n, ISTR_DPTR_INTERNAL_MAXLEN));
+        memcpy(v.internal, str, n);
         v.length = n;
     } else {
         v.external = strndup(str, n);
     }
+    assert(istr_dptr_strcmp(v, str, n) == 0);
     return v;
 }
 
@@ -112,14 +128,13 @@ typedef struct {
     istr_dptr_t strings[UINT16_MAX];
 } istr_table_t;
 
-
 uint16_t _istr_table_add_str(istr_table_t* table, const char* str, size_t n) {
     uint16_t i = 1;
     // Check if the string is already found at an index in the table
     for(; i < table->used; i++) {
         assert(table->strings[i].external != NULL);
         assert(istr_dptr_len(table->strings[i]) > 0);
-        if (istr_dptr_strcmp(table->strings[i], str) == 0) {
+        if (istr_dptr_strcmp(table->strings[i], str, n) == 0) {
             return i;
         }
     }
@@ -140,11 +155,19 @@ uint16_t istr_table_add_str(istr_table_t* table, const char* str, size_t n) {
 }
 
 // id_string -- Collection of indexes into the istr_table structures.
-#define ISTR_MAX 6
+// sizeof(uint64_t)/sizeof(uint16_t)
+// 8/2 == 4
+#define ISTR_LEVEL_MAX 4
 
-typedef struct { uint16_t istr_table_idx[ISTR_MAX]; } istr_t;
+#define ISTR_DELIMITER '/'
 
-istr_table_t table_lvl[5];
+istr_table_t table_lvl[ISTR_LEVEL_MAX];
+typedef struct {
+    union {
+        uint16_t istr_table_idx[ISTR_LEVEL_MAX];
+        uint64_t v;
+    };
+} istr_t;
 
 void ab_print(const char* s, size_t end) {
     putchar('\'');
@@ -154,7 +177,7 @@ void ab_print(const char* s, size_t end) {
     putchar('\'');
 }
 
-istr_t* new_istr(const char* str, size_t n) {
+istr_t new_istr(const char* str, size_t n) {
     if (n == 0) {
         n = strlen(str);
     }
@@ -162,126 +185,141 @@ istr_t* new_istr(const char* str, size_t n) {
     const char* str_start = str;
     const char* str_end = str+n;
 
-    const char* dot0 = index(str_start, '/');
-    if (dot0 == NULL) {
-        dot0 = str_end;
-    } else {
-        assert(dot0 < str_end);
-        dot0++;
+    const char* del[ISTR_LEVEL_MAX+1];
+    size_t j = 0;
+    del[j++] = str_start;
+    assert(j == 1);
+
+    while (j < ISTR_LEVEL_MAX-1) {
+        del[j] = index(del[j-1], ISTR_DELIMITER);
+        if (del[j] == NULL) {
+            break;
+        } else {
+            del[j]++;
+            j++;
+        }
     }
 
-    const char* dot1 = index(dot0, '/');
-    if (dot1 == NULL) {
-        dot1 = str_end;
-    } else {
-        assert(dot1 < str_end);
-        dot1++;
+    del[j] = rindex(del[j-1], ISTR_DELIMITER);
+    if(del[j] != NULL) {
+        del[j]++;
+        j++;
     }
 
-    const char* dot2 = index(dot1, '/');
-    if (dot2 == NULL) {
-        dot2 = str_end;
-    } else {
-        assert(dot2 < str_end);
-        dot2++;
+    while (j < ISTR_LEVEL_MAX+1) {
+        del[j] = str_end;
+        j++;
+    }
+    assert(ISTR_LEVEL_MAX+1 == j);
+
+    size_t slen[ISTR_LEVEL_MAX];
+    for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
+        slen[i] = del[i+1]-del[i];
+        if (del[i+1] != str_end) {
+            slen[i]--;
+        }
     }
 
-    const char* dotn = rindex(dot2, '/');
-    if (dotn == NULL) {
-        dotn = str_end;
-    } else {
-        assert(dotn < str_end);
-        dotn++;
-    }
-
-    size_t slen0 = dot0-str_start;
-    size_t slen1 = dot1-dot0;
-    size_t slen2 = dot2-dot1;
-    size_t slen3 = dotn-dot2;
-    size_t slen4 = str_end-dotn;
-
-    istr_t* nstr = (istr_t*)malloc(ISTR_MAX*sizeof(uint16_t));
-    uint8_t end = 0;
-    if (slen0 > 0) {
-        nstr->istr_table_idx[0] = istr_table_add_str(&(table_lvl[0]), str_start, slen0);
-
-        printf("0-%d: (%p %d %d) - ", end, str_start, slen0, (int)(nstr->istr_table_idx[0]));
-        ab_print(str_start, slen0);
-        putchar(' ');
-        putchar('"');
-        istr_dptr_print(table_lvl[0].strings[nstr->istr_table_idx[0]]);
-        putchar('"');
+    for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
+        printf("%d: ", i);
+        ab_print(del[i], slen[i]);
         printf("\n");
-
-        end++;
     }
-
-    if (slen1 > 0) {
-        nstr->istr_table_idx[1] = istr_table_add_str(&(table_lvl[1]), dot0, slen1);
-
-        printf("1-%d: (%p %d %d) - ", end, dot0, slen1, (int)(nstr->istr_table_idx[1]));
-        ab_print(dot0, slen1);
-        putchar(' ');
-        putchar('"');
-        istr_dptr_print(table_lvl[1].strings[nstr->istr_table_idx[1]]);
-        putchar('"');
-        printf("\n");
-
-        end++;
-    }
-
-    if (slen2 > 0) {
-        nstr->istr_table_idx[2] = istr_table_add_str(&(table_lvl[2]), dot1, slen2);
-
-        printf("2-%d: (%p %d %d) - ", end, dot1, slen2, (int)(nstr->istr_table_idx[2]));
-        ab_print(dot1, slen2);
-        printf("\n");
-
-        end++;
-    }
-
-    if (slen3 > 0) {
-        nstr->istr_table_idx[3] = istr_table_add_str(&(table_lvl[3]), dot2, slen3);
-
-        printf("3-%d: (%p %d %d) - ", end, dot2, slen3, (int)(nstr->istr_table_idx[3]));
-        ab_print(dot2, slen3);
-        printf("\n");
-
-        end++;
-    }
-
-    if (slen4 > 0) {
-        nstr->istr_table_idx[4] = istr_table_add_str(&(table_lvl[4]), dotn, slen4);
-
-        printf("4-%d: (%p %d %d) - ", end, dotn, slen4, (int)(nstr->istr_table_idx[4]));
-        ab_print(dotn, slen4);
-        printf("\n");
-
-        end++;
-    }
-
     printf("--\n");
-    nstr->istr_table_idx[end] = 0;
+
+    istr_t nstr = { 0 }; // = (istr_t*)malloc(ISTR_LEVEL_MAX*sizeof(uint16_t));
+    for (size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
+        if (slen[i] > 0) {
+            nstr.istr_table_idx[i] = istr_table_add_str(&(table_lvl[i]), del[i], slen[i]);
+        } else {
+            nstr.istr_table_idx[i] = 0;
+        }
+    }
     return nstr;
 }
 
-void istr_print(istr_t* s) {
+void istr_print(istr_t s) {
     size_t i = 0;
-    while((s->istr_table_idx[i]) != 0) {
-        istr_dptr_print(table_lvl[i].strings[s->istr_table_idx[i]]);
+    while(i < ISTR_LEVEL_MAX) {
+        if (i > 0) {
+            putchar(ISTR_DELIMITER);
+        }
+        istr_dptr_print(table_lvl[i].strings[s.istr_table_idx[i]]);
         i++;
+        if ((s.istr_table_idx[i]) == 0)
+            break;
     }
 }
 
+void istr_repr(istr_t s) {
+    size_t i = 0;
+    while(i < ISTR_LEVEL_MAX) {
+        istr_dptr_repr(table_lvl[i].strings[s.istr_table_idx[i]]);
+        i++;
+        if ((s.istr_table_idx[i]) == 0)
+            break;
+        putchar(' ');
+        putchar(ISTR_DELIMITER);
+        putchar(' ');
+    }
+}
+
+inline bool istr_eq(istr_t a, istr_t b) {
+    for(size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
+        if (a.istr_table_idx[i] != b.istr_table_idx[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int istr_cmp(istr_t a, istr_t b) {
+    for(size_t i = 0; i < ISTR_LEVEL_MAX; i++) {
+        uint16_t idx_a = a.istr_table_idx[i];
+        uint16_t idx_b = b.istr_table_idx[i];
+        if (idx_a == idx_b)
+            continue;
+        istr_dptr_t dptr_a = table_lvl[i].strings[idx_a];
+        istr_dptr_t dptr_b = table_lvl[i].strings[idx_b];
+        // FIXME: Make this work...
+        if (idx_a == 0) {
+            return -1;
+        }
+        if (idx_b == 0) {
+            return +1;
+        }
+        return istr_dptr_cmp(dptr_a, dptr_b);
+    }
+    return 0;
+}
+
+
 int main(int argc, char **argv) {
 
-    istr_t* strings[64];
+    istr_t strings[64];
 
     size_t i = 0;
     strings[i++] = new_istr("A1", 0);
+    assert(table_lvl[0].used == 2);
+    assert(table_lvl[1].used == 1);
+    assert(table_lvl[2].used == 1);
+    assert(table_lvl[3].used == 1);
     strings[i++] = new_istr("A1/", 0);
+    assert(table_lvl[0].used == 3);
+    assert(table_lvl[1].used == 1);
+    assert(table_lvl[2].used == 1);
+    assert(table_lvl[3].used == 1);
     strings[i++] = new_istr("A1/B1", 0);
+    assert(table_lvl[0].used == 3);
+    assert(table_lvl[1].used == 2);
+    assert(table_lvl[2].used == 1);
+    assert(table_lvl[3].used == 1);
+    //strings[i++] = new_istr("A1//B1", 0);
     strings[i++] = new_istr("A1/B1/C", 0);
+    assert(table_lvl[0].used == 3);
+    assert(table_lvl[1].used == 2);
+    assert(table_lvl[2].used == 2);
+    assert(table_lvl[3].used == 1);
     strings[i++] = new_istr("A1/B1/C/D", 0);
     strings[i++] = new_istr("A1/B2/C/D/E", 0);
     strings[i++] = new_istr("A1/B3/C/D/E/F", 0);
@@ -311,13 +349,47 @@ int main(int argc, char **argv) {
     strings[i++] = new_istr("INT_L_X36Y87/LH7", 0);
     strings[i++] = new_istr("INT_L_X38Y87/LH5", 0);
     strings[i++] = new_istr("INT_L_X40Y87/LH3", 0);
-    strings[i++] = NULL;
+    strings[i++].v = 0;
 
-    for(size_t i = 0; strings[i] != NULL; i++) {
-        printf("%d: '", i);
-        istr_print(strings[i]);
-        printf("'\n");
+    printf("\n\n=== Tables ===\n");
+    for(size_t j = 0; j < ISTR_LEVEL_MAX; j++) {
+        printf("--- %d level (%d entries)---\n", j, table_lvl[j].used);
+        for(size_t k = 1; k < table_lvl[j].used; k++) {
+            printf("[%04d] = ", k);
+            istr_dptr_print(table_lvl[j].strings[k]);
+            printf("\";\n");
+        }
     }
 
+    printf("\n\n=== Strings ===\n");
+    for(size_t j = 0; strings[j].v != 0; j++) {
+        printf("% 4d: '", j);
+        istr_print(strings[j]);
+        printf(";\n      ");
+        istr_repr(strings[j]);
+        printf("\n");
+    }
+
+    istr_t cmp1 = new_istr("A1/B1/C/D", 0);
+    istr_t cmp2 = new_istr("CMT_FIFO_L_X107Y97/CMT_FIFO_LH2_0", 0);
+    istr_t cmp3 = new_istr("INT_L_X40Y87/LH3", 0);
+
+    printf("\n\n=== Comparisons ===\n");
+    for(size_t j = 0; strings[j].v != 0; j++) {
+        istr_t a = strings[j];
+        printf("% 4d: '", j);
+        istr_print(a);
+        printf("'");
+        if (istr_cmp(a, cmp1) == 0) {
+            printf(" == 'A1/B1/C/D'");
+        }
+        if (istr_cmp(a, cmp2) == 0) {
+            printf(" == 'CMT_FIFO_L_X107Y97/CMT_FIFO_LH2_0'");
+        }
+        if (istr_cmp(a, cmp3) == 0) {
+            printf(" == 'INT_L_X40Y87/LH3'");
+        }
+        printf("\n");
+    }
     return 0;
 }
