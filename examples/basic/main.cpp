@@ -62,7 +62,8 @@ int main(int argc, char **argv) {
     printf("\n\n=== Tables ===\n");
     for(size_t j = 0; j < ISTR_LEVEL_MAX; j++) {
         printf("--- %d level (%d entries)---\n", j, istr_dptr_tables[j].used);
-        for(size_t k = 1; k < istr_dptr_tables[j].used; k++) {
+        for(size_t k = 1; k < UINT16_MAX; k++) {
+            if(istr_dptr_tables[j].strings[k].external == NULL) continue;
             printf("[%04d] = \"", k);
             istr_dptr_print(istr_dptr_tables[j].strings[k]);
             printf("\";\n");

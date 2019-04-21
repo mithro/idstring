@@ -1,5 +1,5 @@
 #include <algorithm>    // std::min
-
+#include <bits/hash_bytes.h>
 #include <endian.h>
 
 #include <cassert>
@@ -96,11 +96,25 @@ int istr_dptr_strcmp(istr_dptr_t a, const char* b, size_t n) {
     }
 }
 
-int istr_dptr_cmp(istr_dptr_t a, istr_dptr_t b) {
-    if (b.length != 0) {
-        return istr_dptr_strcmp(a, b.internal, b.length);
-    } else {
-        return istr_dptr_strcmp(a, b.external, strlen(b.external));
+/* If a string is stored inside the pointer and the other is not, there is no way
+ * they can be equal. In that case, we run strncmp through the smaller(internal) string.
+ * If they are equal to that point, we "imagine" the internal string is zero-terminated
+ * and return the difference between the characters at the end of the internal string
+ * which is just the external string's character at that point. */
+int istr_dptr_cmp(istr_dptr_t a, istr_dptr_t b){
+    int na, nb, x;
+    na = istr_dptr_internal_len(a);
+    nb = istr_dptr_internal_len(b);
+    if(na == 0 && nb == 0){
+        return strcmp(a.external, b.external);
+    }else if(na == 0 && nb != 0){
+        x = strncmp(a.external, b.internal, nb);
+        return x != 0 ? x : a.external[nb];
+    }else if(na != 0 && nb == 0){
+        x = strncmp(a.internal, b.external, na);
+        return x != 0 ? x : -b.external[na];
+    }else{
+        return strncmp(a.internal, b.internal, ISTR_DPTR_INTERNAL_MAXLEN);
     }
 }
 
@@ -121,26 +135,25 @@ inline istr_dptr_t create_istr_dptr(const char* str, size_t n) {
 // == 65,535 * 8 / 1024 / 1024
 // == 0.5 megabytes
 typedef struct {
-    uint16_t used = 1; // We leave the zero index empty.
-    istr_dptr_t strings[UINT16_MAX];
+    uint16_t used = 1;
+    istr_dptr_t strings[UINT16_MAX+1];
 } istr_dptr_table_t;
 
 uint16_t _istr_dptr_table_add_str(istr_dptr_table_t* table, const char* str, size_t n) {
-    uint16_t i = 1;
-    // Check if the string is already found at an index in the table
-    for(; i < table->used; i++) {
-        assert(table->strings[i].external != NULL);
-        assert(istr_dptr_len(table->strings[i]) > 0);
+    uint16_t i = std::max((size_t)1, std::_Hash_bytes(str, n, 0));
+    // Probe the index found by hashing.
+    // If an entry is found, check if it's our string and look for empty space if it isn't.
+    while(table->strings[i].external != NULL){
         if (istr_dptr_strcmp(table->strings[i], str, n) == 0) {
             return i;
         }
+        i = std::max(1, i+1);
     }
-    assert(i < UINT16_MAX);
-    table->used += 1;
-    // Otherwise add the string
+    // Otherwise add the string.
     table->strings[i] = create_istr_dptr(str, n);
     assert(table->strings[i].external != NULL);
     assert(istr_dptr_len(table->strings[i]) > 0);
+    table->used += 1;
     return i;
 }
 

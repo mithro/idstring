@@ -1,24 +1,25 @@
 #include "idstring.h"
 
-#include <fstream>
+#include <stdio.h>
 #include <string>
 #include <vector>
 
 int main(int argc, char **argv) {
     std::vector<istr_t> strings;
     std::string W;
-    std::ifstream F;
     ISTR_DELIMITER = '.';
-    F.open("a50t_all_features.fasm");
-    while(F >> W){
-    	strings.push_back(new_istr(W.c_str(), strlen(W.c_str())));
+    FILE *F = fopen("a50t_all_features.fasm", "r");
+    char line[1024];
+    while(fgets(line, 1024, F) != NULL){
+        strings.push_back(new_istr(line, strlen(line)-1));
     }
 
     printf("\n\n=== Tables ===\n");
     for(size_t j = 0; j < ISTR_LEVEL_MAX; j++) {
         int x = 0;
         printf("--- %d level (%d entries)---\n", j, istr_dptr_tables[j].used);
-        for(size_t k = 1; k < istr_dptr_tables[j].used; k++) {
+        for(size_t k = 1; k < UINT16_MAX; k++) {
+            if(istr_dptr_tables[j].strings[k].external == NULL) continue;
             printf("[%04d] = \"", k);
             istr_dptr_print(istr_dptr_tables[j].strings[k]);
             if(istr_dptr_internal_len(istr_dptr_tables[j].strings[k]))
