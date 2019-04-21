@@ -2,7 +2,7 @@
 
 int main(int argc, char **argv) {
     istr_t strings[64];
-    istr_set_delimiter('/');
+    ISTR_DELIMITER = '/';
 
     size_t i = 0;
 
