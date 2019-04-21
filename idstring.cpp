@@ -1,55 +1,10 @@
+#include "idstring.h"
 
-#include <algorithm>    // std::min
+istr_dptr_table_t istr_dptr_tables[ISTR_LEVEL_MAX];
 
-#include <endian.h>
-
-#include <cassert>
-#include <cstdint>
-#include <cstring>
-#include <cstdio>
-
-// Future optimization: Use 6-bit ASCII
-//  - [A-Z] - 26
-//  - [0-9] - 10 - 36 -> 6bits
-// (2**6 - 36) == 28 spare characters
-//
-// - 32/6, 32%6 == 5 characters, 2bit == 4
-// - 64/6, 64%6 == 10 characters, 4bit == 16
-
-// On 64bit platforms a pointer takes 8 bytes. Hence we could easily fit a 7
-// byte string into a pointer.
-//
-// Assuming
-//  - 32bit alignment, bottom 2bit static - 2**2 = 4, 4 bytes == 3 bytes storage
-//  - 64bit alignment, bottom 3bit static - 2**3 = 8, 8 bytes == 7 bytes storage
-
-// id_string_data_ptr == istr_dptr
-// Pointer which allows storing small strings directly inside the
-// pointer.
-
-#define ISTR_DPTR_INTERNAL_MAXLEN (sizeof(char*))
-#define ISTR_DPTR_MASK 0b111
-
-//#if INTPTR_MAX == 4294967295
-//#define ISTR_DPTR_MASK 0b11
-//#elif INTPTR_MAX == 18446744073709551615
-//#endif
-
-
-typedef union {
-    struct {
-#if BYTE_ORDER == LITTLE_ENDIAN
-        uint8_t length;
-#endif
-        char internal[ISTR_DPTR_INTERNAL_MAXLEN];
-
-#if BYTE_ORDER == BIG_ENDIAN
-        uint8_t length;
-#endif
-    };
-    const char* external;
-} istr_dptr_t;
-
+void istr_set_delimiter(char x){
+	ISTR_DELIMITER = x;
+}
 
 inline uint8_t istr_dptr_internal_len(istr_dptr_t v) {
     return v.length & ISTR_DPTR_MASK;
@@ -117,17 +72,8 @@ inline istr_dptr_t create_istr_dptr(const char* str, size_t n) {
     return v;
 }
 
-// id_strings_table - Stores 65,535 id_string_data_ptr values
-// 65,535 elements * sizeof(id_string_data_ptr) / 1024 / 1024
-// == 65,535 * 8 / 1024 / 1024
-// == 0.5 megabytes
-typedef struct {
-    uint16_t used = 1; // We leave the zero index empty.
-    istr_dptr_t strings[UINT16_MAX];
-} istr_dptr_table_t;
-
 uint16_t _istr_dptr_table_add_str(istr_dptr_table_t* table, const char* str, size_t n) {
-    uint16_t i = 1;
+    uint32_t i = 1;
     // Check if the string is already found at an index in the table
     for(; i < table->used; i++) {
         assert(table->strings[i].external != NULL);
@@ -151,25 +97,6 @@ uint16_t istr_dptr_table_add_str(istr_dptr_table_t* table, const char* str, size
     assert(r > 0);
     return r;
 }
-
-// id_string -- Collection of indexes into the istr_dptr_table structures.
-// sizeof(uint64_t)/sizeof(uint16_t)
-// 8/2 == 4
-#define ISTR_LEVEL_MAX 4
-
-#define ISTR_DELIMITER '/'
-
-// Tables for storing string data pointers, one for each level.
-istr_dptr_table_t istr_dptr_tables[ISTR_LEVEL_MAX];
-
-// String structure == 8bytes == uint64_t
-// Array of uint16_t indexes into istr_dptr_tables
-typedef struct {
-    union {
-        uint16_t dptr_idx[ISTR_LEVEL_MAX];
-        uint64_t v;
-    };
-} istr_t;
 
 void ab_print(const char* s, size_t end) {
     putchar('\'');
@@ -286,107 +213,6 @@ int istr_cmp(istr_t a, istr_t b) {
             return +1;
         }
         return istr_dptr_cmp(dptr_a, dptr_b);
-    }
-    return 0;
-}
-
-
-int main(int argc, char **argv) {
-
-    istr_t strings[64];
-
-    size_t i = 0;
-    strings[i++] = new_istr("A1", 0);
-    assert(istr_dptr_tables[0].used == 2);
-    assert(istr_dptr_tables[1].used == 1);
-    assert(istr_dptr_tables[2].used == 1);
-    assert(istr_dptr_tables[3].used == 1);
-    strings[i++] = new_istr("A1/", 0);
-    assert(istr_dptr_tables[0].used == 3);
-    assert(istr_dptr_tables[1].used == 1);
-    assert(istr_dptr_tables[2].used == 1);
-    assert(istr_dptr_tables[3].used == 1);
-    strings[i++] = new_istr("A1/B1", 0);
-    assert(istr_dptr_tables[0].used == 3);
-    assert(istr_dptr_tables[1].used == 2);
-    assert(istr_dptr_tables[2].used == 1);
-    assert(istr_dptr_tables[3].used == 1);
-    //strings[i++] = new_istr("A1//B1", 0);
-    strings[i++] = new_istr("A1/B1/C", 0);
-    assert(istr_dptr_tables[0].used == 3);
-    assert(istr_dptr_tables[1].used == 2);
-    assert(istr_dptr_tables[2].used == 2);
-    assert(istr_dptr_tables[3].used == 1);
-    strings[i++] = new_istr("A1/B1/C/D", 0);
-    strings[i++] = new_istr("A1/B2/C/D/E", 0);
-    strings[i++] = new_istr("A1/B3/C/D/E/F", 0);
-    strings[i++] = new_istr("A2/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAAAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAAAAAA/B1/C/D/E/F", 0);
-    strings[i++] = new_istr("AAAAAAAAAA/B1/C/D/E/F", 0);
-
-    strings[i++] = new_istr("CMT_FIFO_L_X107Y97/CMT_FIFO_LH2_0", 0);
-    strings[i++] = new_istr("CMT_TOP_L_UPPER_T_X106Y96/CMT_TOP_LH2_0", 0);
-    strings[i++] = new_istr("DSP_L_X34Y85/DSP_LH10_2", 0);
-    strings[i++] = new_istr("HCLK_R_X110Y78/HCLK_LV5", 0);
-    strings[i++] = new_istr("HCLK_R_X64Y130/HCLK_NN2BEG2", 0);
-    strings[i++] = new_istr("INT_INTERFACE_L_X34Y87/INT_INTERFACE_LH10", 0);
-    strings[i++] = new_istr("INT_INTERFACE_L_X42Y87/INT_INTERFACE_LH2", 0);
-    strings[i++] = new_istr("INT_INTERFACE_R_X23Y126/INT_INTERFACE_WW2END1", 0);
-    strings[i++] = new_istr("INT_L_X24Y126/WW2A1", 0);
-    strings[i++] = new_istr("INT_L_X26Y123/WW4C3", 0);
-    strings[i++] = new_istr("INT_L_X30Y123/WW4A3", 0);
-    strings[i++] = new_istr("INT_L_X32Y87/LH11", 0);
-    strings[i++] = new_istr("INT_L_X34Y87/LH9", 0);
-    strings[i++] = new_istr("INT_L_X36Y87/LH7", 0);
-    strings[i++] = new_istr("INT_L_X38Y87/LH5", 0);
-    strings[i++] = new_istr("INT_L_X40Y87/LH3", 0);
-    strings[i++].v = 0;
-
-    printf("\n\n=== Tables ===\n");
-    for(size_t j = 0; j < ISTR_LEVEL_MAX; j++) {
-        printf("--- %d level (%d entries)---\n", j, istr_dptr_tables[j].used);
-        for(size_t k = 1; k < istr_dptr_tables[j].used; k++) {
-            printf("[%04d] = \"", k);
-            istr_dptr_print(istr_dptr_tables[j].strings[k]);
-            printf("\";\n");
-        }
-    }
-
-    printf("\n\n=== Strings ===\n");
-    for(size_t j = 0; strings[j].v != 0; j++) {
-        printf("% 4d: '", j);
-        istr_print(strings[j]);
-        printf(";\n      ");
-        istr_repr(strings[j]);
-        printf("\n");
-    }
-
-    istr_t cmp1 = new_istr("A1/B1/C/D", 0);
-    istr_t cmp2 = new_istr("CMT_FIFO_L_X107Y97/CMT_FIFO_LH2_0", 0);
-    istr_t cmp3 = new_istr("INT_L_X40Y87/LH3", 0);
-
-    printf("\n\n=== Comparisons ===\n");
-    for(size_t j = 0; strings[j].v != 0; j++) {
-        istr_t a = strings[j];
-        printf("% 4d: '", j);
-        istr_print(a);
-        printf("'");
-        if (istr_cmp(a, cmp1) == 0) {
-            printf(" == 'A1/B1/C/D'");
-        }
-        if (istr_cmp(a, cmp2) == 0) {
-            printf(" == 'CMT_FIFO_L_X107Y97/CMT_FIFO_LH2_0'");
-        }
-        if (istr_cmp(a, cmp3) == 0) {
-            printf(" == 'INT_L_X40Y87/LH3'");
-        }
-        printf("\n");
     }
     return 0;
 }
