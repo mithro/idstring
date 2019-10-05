@@ -1,6 +1,8 @@
 #include "idstring.h"
 
 int main(int argc, char **argv) {
+    assert(sizeof(istr_dptr_t) == sizeof(char*));  // The promise
+
     istr_t strings[64];
     ISTR_DELIMITER = '/';
 

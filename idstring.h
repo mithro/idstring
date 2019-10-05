@@ -26,7 +26,7 @@
 // Pointer which allows storing small strings directly inside the
 // pointer.
 
-#define ISTR_DPTR_INTERNAL_MAXLEN (sizeof(char*))
+#define ISTR_DPTR_INTERNAL_MAXLEN (sizeof(char*) - sizeof(uint8_t))
 #define ISTR_DPTR_MASK 0b111
 
 //#if INTPTR_MAX == 4294967295
