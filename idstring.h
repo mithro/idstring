@@ -48,7 +48,7 @@ typedef union {
     };
     const char* external;
 } istr_dptr_t;
-
+static_assert(sizeof(istr_dptr_t) == sizeof(char*), "Size mismatch");
 
 inline uint8_t istr_dptr_internal_len(istr_dptr_t v) {
     return v.length & ISTR_DPTR_MASK;
